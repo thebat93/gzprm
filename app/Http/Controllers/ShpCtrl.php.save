@@ -1,0 +1,170 @@
+<?php
+namespace App\Http\Controllers;
+use App\Http\Requests;
+//use Illuminate\Http\Request;
+use Libraries\GeoserverWrapper;
+use Auth;
+use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+
+class ShpCtrl extends Controller
+{
+    public function getshp()
+    {
+$user=Auth::user()->name;
+//$user = mb_convert_case($user, MB_CASE_LOWER);
+$gsrv="/var/www/laravel/laravel/public/geoportal";
+//Подсоединяем обертку
+//$geoserver = new GeoserverWrapper('http://192.168.255.140:8080/geoserver/', 'admin', 'geoserver');
+
+/* //Проверяем имя таблицы
+$query = "SELECT EXISTS (
+    SELECT 1
+    FROM   pg_catalog.pg_class c
+    JOIN   pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE  n.nspname = 'public'
+    AND    c.relname = 'order_$user');";
+$result = pg_query($query);
+$val = pg_fetch_result($result,0,0);
+if($val=='f'){ 
+$query = "CREATE TABLE order_$user (id SERIAL NOT NULL PRIMARY KEY, geometry geometry(Geometry,4326), link character varying, state integer);";
+pg_query($query);
+} */
+//Пишем строку геоджейсон
+$text = $_POST['geojsonStr'];
+$dir = "geoportal/$user";
+//Создаем папку пользователя если она не существует
+if(!is_dir($dir)) mkdir($dir); 
+$file_path="$dir/$user.geojson";
+$fp = fopen($file_path, "w");
+fwrite($fp, $text);
+fclose($fp);
+$date = date("Y.m.d_H:i:s");
+mkdir("$dir/$date");
+$destination = "$gsrv/$user/$date";
+//Запускаем bash-скрипт
+$run = app_path() . "/Libraries/getshp.sh $date $user";
+exec($run);
+$dbconn = pg_connect("host=192.168.255.140 dbname=kvp user=admin_kvp password=blockade");
+//Добавляем линк
+//$query = "UPDATE order_$user SET link='$destination' WHERE id IN(SELECT max(id) FROM order_$user);";
+$query = "UPDATE orders SET link='$destination' WHERE id IN(SELECT max(id) FROM orders);";
+pg_query($query);
+//Добавляем в параметры имя пользователя
+$query = "UPDATE orders SET name='$user' WHERE id IN(SELECT max(id) FROM orders);";
+pg_query($query);
+//Объединяем строки если фигур было несколько
+// $query = "UPDATE order_$user SET geometry = ST_Collect(ARRAY(SELECT geometry from order_$user where link is null OR id = (SELECT max(id) from order_$user))) where id =(SELECT max(id) FROM order_$user);";
+// pg_query($query);
+// //Удаляем лишние строки
+// $query = "DELETE FROM order_$user WHERE link is NULL;";
+$query = "UPDATE orders SET geometry = ST_Collect(ARRAY(SELECT geometry from orders where link is null OR id = (SELECT max(id) from orders))) where id =(SELECT max(id) FROM orders);";
+pg_query($query);
+//Удаляем лишние строки
+$query = "DELETE FROM orders WHERE link is NULL;";
+pg_query($query);
+/*$query = "SELECT max(id) FROM order_$user;";
+$result = pg_query($query);
+$val = pg_fetch_all($result);
+$number=$val[0]['max'];
+*/
+pg_close($dbconn);
+//$geoserver->createPostGISDataStore('order_igor', 'users', 'kvp', 'admin_kvp', 'blockade', 'localhost', '5432'); 
+//$geoserver->createLayerSRS('order_igor', 'users', 'EPSG:3857', 'order_igor');
+//$run = app_path() . "/changestyle.sh $user";
+//exec($run);*/
+    }
+    public function upshp(Request $request)
+    {        
+    $user=Auth::user()->name;
+    $gsrv="/var/www/laravel/laravel/public/geoportal";
+    $date = date("Y.m.d_H:i:s");
+    if ($request->hasFile('file')) {
+        if ($request->file('file')->isValid()) {
+                echo "Файл загружен";
+                $dir = "geoportal/$user";
+                //Создаем папку пользователя если она не существует
+                if (!is_dir($dir))
+                    mkdir($dir);
+                mkdir("$dir/$date");
+                $file = $request->file('file');
+                $file->move("geoportal/$user/$date", "usrshp.zip");
+                $destination = "$gsrv/$user/$date";
+                $run = app_path() . "/Libraries/upshp.sh $date $user";
+                exec($run);
+                $dbconn = pg_connect("host=192.168.255.140 dbname=kvp user=admin_kvp password=blockade");
+                $query = "UPDATE orders SET link='$destination' WHERE id IN(SELECT max(id) FROM orders);";
+                pg_query($query);
+                $query = "UPDATE orders SET name='$user' WHERE id IN(SELECT max(id) FROM orders);";
+                pg_query($query);
+//Объединяем строки если фигур было несколько
+                $query = "UPDATE orders SET geometry = ST_Collect(ARRAY(SELECT geometry from orders where link is null OR id = (SELECT max(id) from orders))) where id =(SELECT max(id) FROM orders);";
+                pg_query($query);
+//Удаляем лишние строки
+                $query = "DELETE FROM orders WHERE link is NULL;";
+                pg_query($query);
+                pg_close($dbconn);
+            }
+    }
+    }
+    public function object_from_file($filename) 
+        {
+        $file = file_get_contents($filename);
+        $value = unserialize($file);
+        return $value;
+        }
+    public function intersect()
+    {
+        $text = $_POST['geojsonStr'];
+        $dbconn = pg_connect("host=192.168.255.140 dbname=kvp user=admin_kvp password=blockade");
+        $query = "CREATE TEMP TABLE gjson(
+location json, geom geometry
+);";
+        pg_query($query);
+        $query = "INSERT INTO gjson VALUES('$text');";
+        pg_query($query);
+        $query = "UPDATE gjson SET geom =(
+WITH data AS (SELECT gjson.location::json AS fc FROM gjson )
+SELECT
+  ST_GeomFromGeoJSON(feat->>'geometry')
+FROM (
+  SELECT json_array_elements(fc->'features') AS feat
+  FROM data
+)   AS f);";
+        pg_query($query);
+        $query = "SELECT p.id FROM orders AS p, gjson AS n WHERE ST_Intersects(p.geometry, ST_SetSRID(n.geom,4326));";
+        $result = pg_query($query);
+        $val = pg_fetch_all($result);
+        pg_close($dbconn);
+        echo json_encode($val);
+    }
+    
+    public function refreshpanel(pannmbr)
+        {
+if ($pannmbr)
+$user=Auth::user()->name;
+$dbconn = pg_connect("host=192.168.255.140 dbname=kvp user=admin_kvp password=blockade");
+$query = "SELECT id,state FROM orders WHERE name='$user';";
+$result = pg_query($query);
+echo("<table class = 'table table-hover table-condensed' border=2 ><tr><td>Номер</td><td>Состояние</td></tr>");
+while ($line = pg_fetch_array($result, null, PGSQL_ASSOC)) {
+    echo("<tr>");
+    foreach ($line as $col_value => $row_value) {
+        if ($row_value=='3'){
+        $row_value="Съемка возможна";    
+        }
+        if ($row_value=='2'){
+        $row_value="Определяется возможность съемки";    
+        }
+        if ($row_value=='1'){
+        $row_value="Съемка невозможна";    
+        }
+        echo("<td id='fltr'>$row_value</td>");
+    }
+    echo("</tr>\n");
+}
+echo("</table>");
+pg_close($dbconn);
+        }
+
+}

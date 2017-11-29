@@ -1,0 +1,112 @@
+<?php
+//use Request;
+//use Illuminate\Support\Facades\Request;
+use Illuminate\Support\Facades\Input;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Session;
+//use App;
+use App\Http\Controllers;
+/*
+|--------------------------------------------------------------------------
+| Application Routes
+|--------------------------------------------------------------------------
+|
+| Here is where you can register all of the routes for an application.
+| It's a breeze. Simply tell Laravel the URIs it should respond to
+| and give it the controller to call when that URI is requested.
+|
+*/
+
+Route::group(['middleware' => ['web']], function () {
+	Route::auth();
+	Route::get('/', 'HomeController@geo');
+	Route::get('/geo', 'HomeController@geo');
+	Route::get('/home', 'HomeController@geo');
+	Route::post('/getshp', 'ShpCtrl@getshp');
+	Route::post('/upshp', 'ShpCtrl@upshp');
+	Route::post('/intersect', 'ShpCtrl@intersect');
+        Route::get('/refreshpanel', function()
+{
+     return view( "content");
+});
+
+        Route::post('/query', function (){
+		$query = $_POST['query'];
+		$host = "192.168.255.140";
+    		$user = "admin_kvp";
+    		$pass = "blockade"; 
+    		$db = "kvp"; 
+    		$con = pg_connect("host=$host dbname=$db user=$user password=$pass") or die ("Could not connect to server\n");
+         	if (!$con) {
+     			die("Error: Could not connect: " . pg_last_error());
+     			}
+		$array = explode("\n", $query);
+		print_r($array);
+		$query = array();
+		$num = count($array);
+		for ($i=0;$i<$num;$i++){
+			$string=$array[$i];
+			//print_r($string);
+			$pos = strpos($string, '#');
+			//print_r($pos);
+			if ($pos !== false) {
+    				$string=strstr($string, '#', true);
+				$array[$i]=$string;
+				}
+			
+			//$array[$i]=$string+';';
+						//$string=strstr($string, '#', true);
+						//print_r($array[$i]);
+			}
+			print_r($array);
+			//$query = implode(" ", $array);
+			//echo $array[$i];
+/*
+			$result = pg_query($array[$i]) or die(pg_last_error());
+                        
+$n = 0;
+echo "<html><body><table class='table hover table-striped table-bordered'><thead><tr>";
+while ($n < pg_num_fields($result))
+{
+        $fieldName = pg_field_name($result, $n);
+        echo '<th>' . $fieldName . '</th>';
+        $n = $n + 1;
+}
+echo '</tr></thead><tbody>';
+$n = 0;
+
+while ($row = pg_fetch_row($result))
+{
+        echo '<tr>';
+        $count = count($row);
+        $y = 0;
+        while ($y < $count)
+        {
+                $c_row = current($row);
+                echo '<td>' . $c_row . '</td>';
+                next($row);
+                $y = $y + 1;
+        }
+        echo '</tr>';
+        $n = $n + 1;
+}
+pg_free_result($result);
+
+echo '</tbody></table></body></html>';
+
+			//$val = pg_fetch_all($result);
+			//echo '<pre>'.print_r($val).'</pre>';
+			}*/
+        	//$result = pg_query($query) or die(pg_last_error());
+        	//$val = pg_fetch_all($result);
+        	pg_close($con);
+		//echo '<pre>'.print_r($val).'</pre>';
+});
+	Route::get('setlocale/{locale}', function ($locale) {
+    		if (in_array($locale, \Config::get('app.locales'))) {
+    			Session::put('locale', $locale);
+		}
+		return redirect()->back();
+		});
+
+});
